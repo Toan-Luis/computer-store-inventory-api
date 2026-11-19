@@ -18,7 +18,7 @@ public sealed class InventoryDbContext(DbContextOptions<InventoryDbContext> opti
 
         modelBuilder.Entity<Category>(category =>
         {
-            category.Property(item => item.Name).HasMaxLength(120).IsRequired();
+            category.Property(item => item.Name).HasMaxLength(Category.MaxNameLength).IsRequired();
         });
 
         modelBuilder.Entity<Product>(product =>

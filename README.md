@@ -4,7 +4,9 @@ An ASP.NET Core backend for a computer and accessories store with one warehouse.
 
 ## Current status
 
-The .NET 10 solution, inventory domain models, SQL Server schema, and xUnit domain tests are in place. The next milestones are catalog endpoints, JWT authentication with admin and staff roles, and transactional stock receipts and issues with movement history.
+The .NET 10 solution, inventory domain models, SQL Server schema, and xUnit tests are in place. Category application services support listing, lookup, creation, renaming, deactivation, and reactivation through an EF Core repository. Category names are trimmed and limited to the SQL column's 120 characters.
+
+Category services are registered in the API host. HTTP endpoints and access control are pending. The next milestones are JWT authentication with admin and staff roles, catalog endpoints, and transactional stock receipts and issues with movement history.
 
 ## Solution layout
 

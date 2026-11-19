@@ -1,7 +1,11 @@
+using Inventory.Application.Categories;
 using Inventory.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
+
+builder.Services.AddScoped<ICategoryRepository, CategoryRepository>();
+builder.Services.AddScoped<CategoryService>();
 
 builder.Services.AddDbContext<InventoryDbContext>(options =>
 {
