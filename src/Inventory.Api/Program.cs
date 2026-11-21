@@ -1,4 +1,7 @@
 using Inventory.Application.Categories;
+using Inventory.Application.Products;
+using Inventory.Application.Stock;
+using Inventory.Api;
 using Inventory.Api.Authentication;
 using Inventory.Infrastructure.Data;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -11,8 +14,11 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddScoped<ICategoryRepository, CategoryRepository>();
 builder.Services.AddScoped<CategoryService>();
+builder.Services.AddScoped<IProductService, ProductService>();
+builder.Services.AddScoped<IStockService, StockService>();
 builder.Services.AddControllers();
 builder.Services.AddProblemDetails();
+builder.Services.AddExceptionHandler<InventoryExceptionHandler>();
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddScoped<TokenIssuer>();
 

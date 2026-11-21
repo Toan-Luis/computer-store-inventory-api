@@ -118,6 +118,67 @@ try {
     $active = Send-Request PATCH "$categoryPath/status" 200 -Token $adminToken -Body @{ isActive = $true }
     if (!$active.isActive) { throw 'Category reactivation failed.' }
 
+    # Product catalog and transactional stock movements.
+    $productA = Send-Request POST '/api/products' 201 -Token $adminToken -Body @{ sku = ' kb-001 '; name = 'Keyboard'; categoryId = $category.id; unit = 'cái'; quantityOnHand = 999 }
+    $productB = Send-Request POST '/api/products' 201 -Token $adminToken -Body @{ sku = 'MS-001'; name = 'Mouse'; categoryId = $category.id; unit = 'cái' }
+    if ($productA.sku -ne 'KB-001' -or $productA.quantityOnHand -ne 0) { throw 'Product SKU or initial stock is invalid.' }
+    Send-Request POST '/api/products' 409 -Token $adminToken -Body @{ sku = 'kb-001'; name = 'Duplicate'; categoryId = $category.id; unit = 'cái' }
+    Send-Request POST '/api/products' 400 -Token $adminToken -Body @{ sku = 'BAD'; name = 'Bad category'; categoryId = 2147483647; unit = 'cái' }
+    Send-Request POST '/api/products' 403 -Token $staffToken -Body @{ sku = 'FORBIDDEN'; name = 'Forbidden'; categoryId = $category.id; unit = 'cái' }
+    Send-Request GET '/api/products?pageSize=0' 400 -Token $staffToken
+    $products = @(Send-Request GET '/api/products?search=KB-001' 200 -Token $staffToken)
+    if ($products.Count -ne 1 -or $products[0].id -ne $productA.id) { throw 'Product search failed.' }
+    $productPath = '/api/products/' + $productA.id
+    $updated = Send-Request PUT $productPath 200 -Token $adminToken -Body @{ name = 'Mechanical keyboard'; categoryId = $category.id; quantityOnHand = 999 }
+    if ($updated.name -ne 'Mechanical keyboard' -or $updated.quantityOnHand -ne 0) { throw 'Product update allowed direct stock editing.' }
+
+    Send-Request POST '/api/stock-movements/receipts' 401 -Body @{ lines = @(@{ productId = $productA.id; quantity = 1 }) }
+    Send-Request POST '/api/stock-movements/receipts' 400 -Token $staffToken -Body @{ lines = @() }
+    Send-Request POST '/api/stock-movements/receipts' 400 -Token $staffToken -Body @{ lines = @($null) }
+    Send-Request POST '/api/stock-movements/receipts' 400 -Token $staffToken -Body @{ lines = @(@{ productId = $productA.id; quantity = 0 }) }
+    Send-Request POST '/api/stock-movements/receipts' 400 -Token $staffToken -Body @{ lines = @(@{ productId = $productA.id; quantity = 1 }, @{ productId = $productA.id; quantity = 1 }) }
+    $receipt = Send-Request POST '/api/stock-movements/receipts' 201 -Token $staffToken -Body @{ lines = @(@{ productId = $productA.id; quantity = 10 }, @{ productId = $productB.id; quantity = 2 }); createdByUserId = 'spoofed' }
+    $staffProfile = Send-Request GET '/api/auth/me' 200 -Token $staffToken
+    if ($receipt.createdByUserId -ne $staffProfile.id -or $receipt.lines.Count -ne 2) { throw 'Movement actor or lines were not persisted.' }
+    $issue = Send-Request POST '/api/stock-movements/issues' 201 -Token $staffToken -Body @{ lines = @(@{ productId = $productA.id; quantity = 4 }, @{ productId = $productB.id; quantity = 1 }) }
+    $balance = Send-Request GET $productPath 200 -Token $staffToken
+    if ($balance.quantityOnHand -ne 6) { throw 'Receipt and issue did not produce the expected balance.' }
+    $historyBefore = @(Send-Request GET '/api/stock-movements' 200 -Token $staffToken)
+    Send-Request POST '/api/stock-movements/issues' 409 -Token $staffToken -Body @{ lines = @(@{ productId = $productA.id; quantity = 1 }, @{ productId = $productB.id; quantity = 99 }) }
+    Send-Request POST '/api/stock-movements/receipts' 404 -Token $staffToken -Body @{ lines = @(@{ productId = $productA.id; quantity = 1 }, @{ productId = 2147483647; quantity = 1 }) }
+    $balance = Send-Request GET $productPath 200 -Token $staffToken
+    $historyAfter = @(Send-Request GET '/api/stock-movements' 200 -Token $staffToken)
+    if ($balance.quantityOnHand -ne 6 -or $historyAfter.Count -ne $historyBefore.Count) { throw 'Failed multi-line movement left partial stock or history.' }
+    Send-Request PATCH "$productPath/status" 200 -Token $adminToken -Body @{ isActive = $false } | Out-Null
+    Send-Request POST '/api/stock-movements/receipts' 409 -Token $staffToken -Body @{ lines = @(@{ productId = $productA.id; quantity = 1 }) }
+    Send-Request POST '/api/stock-movements/issues' 201 -Token $staffToken -Body @{ lines = @(@{ productId = $productA.id; quantity = 1 }) } | Out-Null
+    $balance = Send-Request GET $productPath 200 -Token $staffToken
+    if ($balance.quantityOnHand -ne 5) { throw 'Inactive product could not be sold from remaining stock.' }
+    $issues = @(Send-Request GET "/api/stock-movements?type=2&productId=$($productA.id)" 200 -Token $staffToken)
+    if ($issues.Count -ne 2 -or ($issues | Where-Object { $_.type -ne 2 })) { throw 'Movement history filtering failed.' }
+    Send-Request GET "/api/stock-movements/$($receipt.id)" 200 -Token $staffToken | Out-Null
+    Send-Request GET '/api/stock-movements?type=99' 400 -Token $staffToken
+    Send-Request GET '/api/stock-movements?from=2026-12-01&to=2026-01-01' 400 -Token $staffToken
+
+    # Two concurrent issues each ask for four units from a stock of five.
+    $raceProduct = Send-Request POST '/api/products' 201 -Token $adminToken -Body @{ sku = 'RACE'; name = 'Concurrency test'; categoryId = $category.id; unit = 'cái' }
+    Send-Request POST '/api/stock-movements/receipts' 201 -Token $staffToken -Body @{ lines = @(@{ productId = $raceProduct.id; quantity = 5 }) } | Out-Null
+    $raceBody = @{ lines = @(@{ productId = $raceProduct.id; quantity = 4 }) } | ConvertTo-Json -Compress
+    $raceUrl = "$inventoryBaseUrl/api/stock-movements/issues"
+    $raceStatuses = @(1..2 | ForEach-Object -Parallel {
+        $result = Invoke-WebRequest $using:raceUrl -Method POST -ContentType 'application/json' -Body $using:raceBody `
+            -Headers @{ Authorization = "Bearer $using:staffToken" } -SkipHttpErrorCheck -TimeoutSec 20
+        [int]$result.StatusCode
+    } -ThrottleLimit 2)
+    $raceBalance = Send-Request GET "/api/products/$($raceProduct.id)" 200 -Token $staffToken
+    if (@($raceStatuses | Where-Object { $_ -eq 201 }).Count -ne 1 -or @($raceStatuses | Where-Object { $_ -eq 409 }).Count -ne 1 -or $raceBalance.quantityOnHand -ne 1) {
+        throw "Concurrent stock issue failed. Statuses $raceStatuses, balance $($raceBalance.quantityOnHand)."
+    }
+
+    $limitProduct = Send-Request POST '/api/products' 201 -Token $adminToken -Body @{ sku = 'LIMIT'; name = 'Integer limit test'; categoryId = $category.id; unit = 'cái' }
+    Send-Request POST '/api/stock-movements/receipts' 201 -Token $staffToken -Body @{ lines = @(@{ productId = $limitProduct.id; quantity = 2147483647 }) } | Out-Null
+    Send-Request POST '/api/stock-movements/receipts' 409 -Token $staffToken -Body @{ lines = @(@{ productId = $limitProduct.id; quantity = 1 }) }
+
     Send-Request POST '/api/auth/change-password' 400 -Token $staffToken -Body @{ currentPassword = 'WrongPassword!9'; newPassword = $inventoryNewPassword }
     Send-Request POST '/api/auth/change-password' 204 -Token $staffToken -Body @{ currentPassword = $inventoryStaffPassword; newPassword = $inventoryNewPassword }
     Send-Request GET '/api/auth/me' 401 -Token $staffToken
@@ -130,7 +191,7 @@ try {
     sqlcmd -S $Server -E -C -b -l 5 -d $inventoryDatabase -Q "IF NOT EXISTS (SELECT 1 FROM dbo.AspNetUsers WHERE NormalizedUserName = N'STAFF@EXAMPLE.TEST' AND LockoutEnd > SYSUTCDATETIME()) THROW 50000, 'Account lockout was not persisted.', 1;"
     # This next attempt reaches the per-IP rate limit set to ten logins/minute.
     Send-Request POST '/api/auth/login' 429 -Body @{ email = 'staff@example.test'; password = $inventoryNewPassword }
-    Write-Output 'API smoke passed: JWT login, roles, account creation, validation, category lifecycle, password change, token revocation, account lockout and rate limiting.'
+    Write-Output 'API smoke passed: authentication, roles, catalog, multi-line stock transactions, rollback, concurrent issues, history, password changes and login protection.'
 }
 finally {
     if ($inventoryApp -and !$inventoryApp.HasExited) { Stop-Process -Id $inventoryApp.Id -Force }

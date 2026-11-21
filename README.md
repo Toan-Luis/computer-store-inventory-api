@@ -6,7 +6,9 @@ An ASP.NET Core backend for a computer and accessories store with one warehouse.
 
 The .NET 10 solution, inventory domain models, SQL Server schema, and xUnit tests are in place. Category application services support listing, lookup, creation, renaming, deactivation, and reactivation through an EF Core repository. Category names are trimmed and limited to the SQL column's 120 characters.
 
-JWT login, admin-created staff accounts, password changes, and protected category endpoints are available. Admin users manage categories and create staff accounts. Staff users can read categories. The next milestones are product endpoints and transactional stock receipts and issues with movement history.
+JWT login, admin-created staff accounts, password changes, and protected catalog endpoints are available. Admin users manage categories and products and create staff accounts. Admin and Staff users can read the catalog, post stock receipts and issues, and query movement history.
+
+Each multi-line movement and its stock changes commit in one SQL Server transaction. A failure rolls back the entire movement. Stock updates check and modify the balance in one SQL statement to prevent concurrent issues from overselling. Inactive products can be issued from remaining stock, and receipts require an active product.
 
 ## Solution layout
 
@@ -61,14 +63,37 @@ Open `http://localhost:5071/swagger` in Development. Call login, copy the return
 | POST | `/api/categories` | Admin |
 | PUT | `/api/categories/{id}` | Admin |
 | PATCH | `/api/categories/{id}/status` | Admin |
+| GET | `/api/products` | Admin or Staff |
+| GET | `/api/products/{id}` | Admin or Staff |
+| POST | `/api/products` | Admin |
+| PUT | `/api/products/{id}` | Admin |
+| PATCH | `/api/products/{id}/status` | Admin |
+| POST | `/api/stock-movements/receipts` | Admin or Staff |
+| POST | `/api/stock-movements/issues` | Admin or Staff |
+| GET | `/api/stock-movements` | Admin or Staff |
+| GET | `/api/stock-movements/{id}` | Admin or Staff |
 
 Login and staff creation accept `email` and `password`. Category creation and renaming accept `name`. The status endpoint accepts `isActive`. Password changes accept `currentPassword` and `newPassword`, and require a fresh login afterward. The security stamp is checked on every authenticated request so a password change invalidates previous tokens.
 
-The API returns 400 for invalid input, 401 for missing or invalid credentials, 403 for insufficient permissions, 404 for a missing category, and 409 for a duplicate account. Login is limited to ten attempts per minute per client IP. Five failed password attempts lock an account for five minutes. For deployments behind a proxy, configure trusted forwarded headers before relying on client-IP rate limiting.
+Create a product with the following body, using an existing category ID. SKU is trimmed, uppercased and unique. Product updates accept `name` and `categoryId`. SKU and unit retain their original values. Stock starts at zero and changes through receipts and issues.
+
+```json
+{ "sku": "KB-001", "name": "Mechanical keyboard", "categoryId": 1, "unit": "cái" }
+```
+
+Receipts and issues use the same body shape. Replace each `productId` with an existing product ID. Every quantity must be a positive integer, and each product appears at most once in a movement. The limit is 100 lines per movement. The API records the authenticated user and the server time. Each successful POST creates a new movement.
+
+```json
+{ "lines": [ { "productId": 1, "quantity": 10 }, { "productId": 2, "quantity": 2 } ] }
+```
+
+Product lists support `search` over SKU and name and an optional `categoryId`. Movement history supports `type` (`1` for receipts, `2` for issues), `productId`, `from`, and `to`. Supply ISO 8601 date-times with an offset for date filters. Both lists support `page` and `pageSize`, defaulting to 1 and 20, with a maximum page size of 100. Product lists include current stock and inactive products. Movement history remains available after a product is deactivated.
+
+The API returns 400 for invalid input, 401 for missing or invalid credentials, 403 for insufficient permissions, 404 for a missing record, and 409 for duplicate accounts, duplicate SKUs, or stock conflicts. Login is limited to ten attempts per minute per client IP. Five failed password attempts lock an account for five minutes. For deployments behind a proxy, configure trusted forwarded headers before relying on client-IP rate limiting.
 
 ## HTTP smoke test
 
-After building, run the following with PowerShell 7 and `sqlcmd` available. It creates a uniquely named SQL Server test database, exercises real HTTP login and category operations, and removes that database when finished.
+After building, run the following with PowerShell 7 and `sqlcmd` available. It creates a uniquely named SQL Server test database, exercises real HTTP authentication, catalog, multi-line movements, rollback, and concurrent stock issues, and removes that database when finished.
 
 ```powershell
 dotnet build InventoryManagement.slnx
