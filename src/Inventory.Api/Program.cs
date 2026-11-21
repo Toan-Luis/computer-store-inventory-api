@@ -75,7 +75,6 @@ builder.Services.AddRateLimiter(options =>
         }));
 });
 
-builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
 {
     options.SwaggerDoc("v1", new OpenApiInfo { Title = "Computer Store Inventory API", Version = "v1" });

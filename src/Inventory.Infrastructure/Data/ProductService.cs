@@ -20,9 +20,9 @@ public sealed class ProductService(InventoryDbContext context) : IProductService
         {
             query = query.Where(product => product.CategoryId == categoryId);
         }
-        return await query.OrderBy(product => product.Id).Skip((page - 1) * pageSize).Take(pageSize)
-            .Select(product => new ProductDto(product.Id, product.Sku, product.Name, product.CategoryId,
-                product.Unit, product.IsActive, product.QuantityOnHand)).ToListAsync(cancellationToken);
+        var products = await query.OrderBy(product => product.Id)
+            .Skip((page - 1) * pageSize).Take(pageSize).ToListAsync(cancellationToken);
+        return products.Select(ToDto).ToArray();
     }
 
     public async Task<ProductDto?> GetAsync(int id, CancellationToken cancellationToken)

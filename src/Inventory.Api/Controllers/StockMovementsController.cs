@@ -33,7 +33,7 @@ public sealed class StockMovementsController(IStockService service, TimeProvider
         [FromQuery] DateTimeOffset? from = null, [FromQuery] DateTimeOffset? to = null,
         [FromQuery, Range(1, 1000000)] int page = 1, [FromQuery, Range(1, 100)] int pageSize = 20)
     {
-        if (from.HasValue && to.HasValue && from > to)
+        if (from > to)
         {
             ModelState.AddModelError(nameof(to), "End time must be on or after start time.");
             return ValidationProblem(ModelState);
