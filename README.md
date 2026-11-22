@@ -10,6 +10,8 @@ JWT login, admin-created staff accounts, password changes, and protected catalog
 
 Each multi-line movement and its stock changes commit in one SQL Server transaction. A failure rolls back the entire movement. Stock updates check and modify the balance in one SQL statement to prevent concurrent issues from overselling. Inactive products can be issued from remaining stock, and receipts require an active product.
 
+Stock conflicts identify insufficient stock, an inactive product, or the integer quantity limit. Product metadata updates reload the current balance before returning the response.
+
 ## Solution layout
 
 | Project | Responsibility |
@@ -90,6 +92,18 @@ Receipts and issues use the same body shape. Replace each `productId` with an ex
 Product lists support `search` over SKU and name and an optional `categoryId`. Movement history supports `type` (`1` for receipts, `2` for issues), `productId`, `from`, and `to`. Supply ISO 8601 date-times with an offset for date filters. Both lists support `page` and `pageSize`, defaulting to 1 and 20, with a maximum page size of 100. Product lists include current stock and inactive products. Movement history remains available after a product is deactivated.
 
 The API returns 400 for invalid input, 401 for missing or invalid credentials, 403 for insufficient permissions, 404 for a missing record, and 409 for duplicate accounts, duplicate SKUs, or stock conflicts. Login is limited to ten attempts per minute per client IP. Five failed password attempts lock an account for five minutes. For deployments behind a proxy, configure trusted forwarded headers before relying on client-IP rate limiting.
+
+## SQL Server integration tests
+
+The xUnit suite includes integration tests for balances, rollback, concurrent receipts and issues, inactive products, integer limits, metadata updates, and movement history. Enable them by setting the following connection string before running tests.
+
+```powershell
+$env:InventoryTestConnectionString = 'Server=localhost;Integrated Security=True;Encrypt=True;TrustServerCertificate=True'
+dotnet test InventoryManagement.slnx
+Remove-Item Env:InventoryTestConnectionString
+```
+
+The test fixture replaces the database name with a unique `InventoryManagementTests_...` name, applies migrations, and removes that database afterward. The configured SQL Server login needs permission to create and drop this test database. With the variable unset, the SQL Server tests are skipped and the remaining xUnit tests run independently.
 
 ## HTTP smoke test
 

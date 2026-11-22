@@ -31,11 +31,21 @@ public sealed class StockService(InventoryDbContext context) : IStockService
 
             if (changed == 0)
             {
-                if (!await context.Products.AnyAsync(product => product.Id == line.ProductId, cancellationToken))
+                var product = await query.AsNoTracking().SingleOrDefaultAsync(cancellationToken);
+                if (product is null)
                 {
                     throw new InventoryException(404, $"Product {line.ProductId} does not exist.");
                 }
-                throw new InventoryException(409, $"Product {line.ProductId} cannot be moved. Check stock, product status and quantity limits.");
+                if (movement.Type == StockMovementType.Issue)
+                {
+                    throw new InventoryException(409,
+                        $"Product {line.ProductId} has insufficient stock. Available: {product.QuantityOnHand}, requested: {line.Quantity}.");
+                }
+                if (!product.IsActive)
+                {
+                    throw new InventoryException(409, $"Product {line.ProductId} is inactive and cannot receive stock.");
+                }
+                throw new InventoryException(409, $"Receipt would exceed the stock quantity limit for product {line.ProductId}.");
             }
         }
 

@@ -57,6 +57,7 @@ public sealed class ProductService(InventoryDbContext context) : IProductService
         await RequireCategoryAsync(categoryId, cancellationToken);
         product.UpdateDetails(name, categoryId);
         await context.SaveChangesAsync(cancellationToken);
+        await context.Entry(product).ReloadAsync(cancellationToken);
         return ToDto(product);
     }
 
@@ -69,6 +70,7 @@ public sealed class ProductService(InventoryDbContext context) : IProductService
         }
         product.SetActive(isActive);
         await context.SaveChangesAsync(cancellationToken);
+        await context.Entry(product).ReloadAsync(cancellationToken);
         return ToDto(product);
     }
 

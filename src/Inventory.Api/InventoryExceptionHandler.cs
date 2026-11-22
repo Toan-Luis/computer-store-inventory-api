@@ -13,14 +13,19 @@ public sealed class InventoryExceptionHandler(IProblemDetailsService problems) :
             return false;
         }
         context.Response.StatusCode = inventoryException.StatusCode;
-        return await problems.TryWriteAsync(new ProblemDetailsContext
+        var problem = new ProblemDetails
+        {
+            Status = inventoryException.StatusCode,
+            Title = inventoryException.Message
+        };
+        if (!await problems.TryWriteAsync(new ProblemDetailsContext
         {
             HttpContext = context,
-            ProblemDetails = new ProblemDetails
-            {
-                Status = inventoryException.StatusCode,
-                Title = inventoryException.Message
-            }
-        });
+            ProblemDetails = problem
+        }))
+        {
+            await context.Response.WriteAsJsonAsync(problem, cancellationToken);
+        }
+        return true;
     }
 }
