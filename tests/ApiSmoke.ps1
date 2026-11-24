@@ -1,4 +1,4 @@
-param([string]$Server = 'localhost')
+param([string]$Server = 'localhost', [string]$AppPath = '')
 
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $true
@@ -44,15 +44,17 @@ try {
     $env:NUGET_PACKAGES = Join-Path $inventoryRoot 'obj/nuget-packages'
     $env:ASPNETCORE_ENVIRONMENT = 'Development'
     $env:ConnectionStrings__InventoryDatabase = "Server=$Server;Database=$inventoryDatabase;Integrated Security=True;Encrypt=True;TrustServerCertificate=True"
-    $env:Jwt__SigningKey = [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(48))
+    [Environment]::SetEnvironmentVariable('Jwt__SigningKey', $null, 'Process')
     $env:BootstrapAdmin__Email = 'admin@example.test'
     $env:BootstrapAdmin__Password = [Guid]::NewGuid().ToString('N') + 'aA!9'
     $inventoryStaffPassword = [Guid]::NewGuid().ToString('N') + 'aA!9'
     $inventoryNewPassword = [Guid]::NewGuid().ToString('N') + 'bB!8'
     $inventoryDll = Join-Path $inventoryRoot 'src/Inventory.Api/bin/Debug/net10.0/Inventory.Api.dll'
+    if ($AppPath) { $inventoryDll = (Resolve-Path -LiteralPath $AppPath).Path }
     $inventoryOutput = New-Item -ItemType Directory -Force -Path 'obj/api-smoke'
 
-    dotnet tool run dotnet-ef database update --project src/Inventory.Infrastructure --startup-project src/Inventory.Api --no-build > (Join-Path $inventoryOutput.FullName 'migration.log')
+    dotnet $inventoryDll --migrate > (Join-Path $inventoryOutput.FullName 'migration.log')
+    $env:Jwt__SigningKey = [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(48))
     dotnet $inventoryDll --bootstrap-admin > (Join-Path $inventoryOutput.FullName 'bootstrap.log')
     dotnet $inventoryDll --bootstrap-admin >> (Join-Path $inventoryOutput.FullName 'bootstrap.log')
 
@@ -198,7 +200,12 @@ finally {
     if ($inventoryDatabase -notmatch '^InventoryManagementSmoke_[a-f0-9]{32}$') { throw 'Unexpected smoke database name.' }
     sqlcmd -S $Server -E -C -b -l 5 -Q "IF DB_ID(N'$inventoryDatabase') IS NOT NULL BEGIN ALTER DATABASE [$inventoryDatabase] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [$inventoryDatabase]; END"
     foreach ($inventoryName in $inventoryEnvironmentNames) {
-        [Environment]::SetEnvironmentVariable($inventoryName, $inventoryEnvironment[$inventoryName], 'Process')
+        if ($null -eq $inventoryEnvironment[$inventoryName]) {
+            Remove-Item -LiteralPath "Env:$inventoryName" -ErrorAction SilentlyContinue
+        }
+        else {
+            [Environment]::SetEnvironmentVariable($inventoryName, $inventoryEnvironment[$inventoryName], 'Process')
+        }
     }
     Pop-Location
 }

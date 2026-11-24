@@ -26,6 +26,17 @@ Stock conflicts identify insufficient stock, an inactive product, or the integer
 
 Install the .NET 10 SDK and have a SQL Server 2019 or newer instance available. The Development configuration uses Windows authentication against `localhost` and targets `InventoryManagementDev`. For a different instance, set `ConnectionStrings__InventoryDatabase` in your environment.
 
+NuGet packages are restored to `obj/nuget-packages` inside the repository. Keeping the repository on D also keeps these downloaded dependencies on D.
+
+For the first local run, use PowerShell 7 from the solution directory:
+
+```powershell
+dotnet restore InventoryManagement.slnx
+./scripts/Start-Local.ps1 -CreateAdmin
+```
+
+The script builds the API, applies migrations, prompts for the initial administrator's credentials, and starts Swagger at `http://localhost:5071/swagger`. On subsequent runs, use `./scripts/Start-Local.ps1`. It uses `Jwt__SigningKey` if supplied, otherwise it generates a key for that run. Restarting with a fresh key invalidates tokens from the previous run. The script restores its environment settings when it exits.
+
 From the solution directory, run:
 
 ```powershell
@@ -115,3 +126,71 @@ dotnet build InventoryManagement.slnx
 ```
 
 Use `./tests/ApiSmoke.ps1 -Server 'localhost'` to select the SQL Server instance. The Windows user running the test needs permission to create and drop its temporary database.
+
+## Published build
+
+Publish a Release build from the solution directory:
+
+```powershell
+dotnet publish src/Inventory.Api/Inventory.Api.csproj -c Release -o ./obj/publish
+```
+
+The published application supports `--migrate` and `--bootstrap-admin` as separate maintenance commands. Set `ConnectionStrings__InventoryDatabase` before using them. The migration command applies the included EF Core migrations and exits. Bootstrap uses `BootstrapAdmin__Email` and `BootstrapAdmin__Password`. Both commands can run directly from the published DLL with the .NET 10 runtime.
+
+```powershell
+dotnet ./obj/publish/Inventory.Api.dll --migrate
+dotnet ./obj/publish/Inventory.Api.dll --bootstrap-admin
+```
+
+To verify the published build against an isolated database with the HTTP smoke test:
+
+```powershell
+./tests/ApiSmoke.ps1 -AppPath ./obj/publish/Inventory.Api.dll
+```
+
+For a local published demo, set `ASPNETCORE_ENVIRONMENT` to `Development`, configure `Jwt__SigningKey` and `ConnectionStrings__InventoryDatabase`, then run the DLL with `--urls http://localhost:5071`. Stop it with Ctrl+C. The published app reads configuration from its current working directory, so environment variables provide a predictable configuration when running it from the solution root.
+
+## Docker demo
+
+The Compose configuration runs the API in Development at `http://localhost:5072/swagger` and SQL Server 2022 Developer on an internal container network. SQL data is stored in the `sql-data` volume. Docker Desktop must be running with Linux containers.
+
+On Windows, configure Docker Desktop's disk image location under Settings and VM resources before pulling images. This location controls where images, build cache and volumes are stored. For this setup it is `D:\DockerData\DockerDesktopWSL`.
+
+On the first run, create `.env` in the solution directory with generated credentials:
+
+```powershell
+$inventorySqlPassword = [Guid]::NewGuid().ToString('N') + 'aA!9'
+$inventoryJwtKey = [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(48))
+New-Item -ItemType File -Path .env -Value "SQL_PASSWORD=$inventorySqlPassword`nJWT_SIGNING_KEY=$inventoryJwtKey`n" | Out-Null
+```
+
+The `.env.example` file lists the required settings. Git and the Docker build context exclude `.env`. Keep this file for subsequent runs so the existing SQL volume and tokens use the same credentials and key.
+
+Build, start SQL Server, and apply migrations:
+
+```powershell
+docker compose build api
+docker compose up -d db --wait
+docker compose run --rm api --migrate
+```
+
+Create your initial administrator, then start the API:
+
+```powershell
+$env:BootstrapAdmin__Email = Read-Host 'Admin email'
+$inventoryPassword = Read-Host 'Admin password' -AsSecureString
+$env:BootstrapAdmin__Password = [Net.NetworkCredential]::new('', $inventoryPassword).Password
+docker compose run --rm -e BootstrapAdmin__Email -e BootstrapAdmin__Password api --bootstrap-admin
+Remove-Item Env:BootstrapAdmin__Password
+docker compose up -d api
+```
+
+Use `docker compose logs api` for startup output and `docker compose down` to stop the stack. The volume retains the database when the containers are stopped or recreated. For subsequent starts, run `docker compose up -d`. After pulling source changes, rebuild the API image and run the migration command before restarting it.
+
+After building the image, verify the container setup with PowerShell 7:
+
+```powershell
+./tests/DockerSmoke.ps1
+```
+
+This test creates a separate Compose project with a randomly assigned local API port and its own SQL volume. It checks migration, admin setup, permissions, stock movements and data persistence after recreating containers, then removes the test project's containers and volume.

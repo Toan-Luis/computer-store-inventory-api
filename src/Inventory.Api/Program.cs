@@ -35,7 +35,12 @@ builder.Services.AddIdentityCore<IdentityUser>(options =>
 
 var jwt = builder.Configuration.GetSection("Jwt").Get<JwtSettings>() ?? new JwtSettings();
 var bootstrapAdmin = args.Contains("--bootstrap-admin");
-if (!bootstrapAdmin)
+var migrateDatabase = args.Contains("--migrate");
+if (bootstrapAdmin && migrateDatabase)
+{
+    throw new InvalidOperationException("Run --migrate and --bootstrap-admin as separate commands.");
+}
+if (!bootstrapAdmin && !migrateDatabase)
 {
     jwt.Validate();
 }
@@ -99,6 +104,15 @@ builder.Services.AddDbContext<InventoryDbContext>(options =>
 });
 
 var app = builder.Build();
+
+if (migrateDatabase)
+{
+    await using var scope = app.Services.CreateAsyncScope();
+    var database = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
+    await database.Database.MigrateAsync();
+    Console.WriteLine("Database migrations completed.");
+    return;
+}
 
 if (bootstrapAdmin)
 {
