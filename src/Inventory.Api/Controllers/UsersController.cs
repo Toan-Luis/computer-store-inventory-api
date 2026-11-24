@@ -49,6 +49,11 @@ public sealed class UsersController(UserManager<IdentityUser> users, InventoryDb
 
     private ActionResult IdentityErrors(IdentityResult result)
     {
+        if (result.Errors.Any(error => error.Code is "DuplicateUserName" or "DuplicateEmail"))
+        {
+            return Conflict(new ProblemDetails { Title = "This account already exists.", Status = 409 });
+        }
+
         foreach (var error in result.Errors)
         {
             ModelState.AddModelError(error.Code, error.Description);

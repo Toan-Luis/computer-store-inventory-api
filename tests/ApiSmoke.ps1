@@ -96,6 +96,16 @@ try {
     if ($staff.role -ne 'Staff') { throw 'Employee creation allowed privilege escalation.' }
     Send-Request POST '/api/users' 409 -Token $adminToken -Body @{ email = 'STAFF@example.test'; password = $inventoryStaffPassword }
     Send-Request POST '/api/users' 400 -Token $adminToken -Body @{ email = 'weak@example.test'; password = 'weak' }
+    $duplicateUserUrl = "$inventoryBaseUrl/api/users"
+    $duplicateUserBody = @{ email = 'concurrent-staff@example.test'; password = $inventoryStaffPassword } | ConvertTo-Json -Compress
+    $duplicateUserStatuses = @(1..2 | ForEach-Object -Parallel {
+        $result = Invoke-WebRequest $using:duplicateUserUrl -Method POST -ContentType 'application/json' -Body $using:duplicateUserBody `
+            -Headers @{ Authorization = "Bearer $using:adminToken" } -SkipHttpErrorCheck -TimeoutSec 20
+        [int]$result.StatusCode
+    } -ThrottleLimit 2)
+    if (@($duplicateUserStatuses | Where-Object { $_ -eq 201 }).Count -ne 1 -or @($duplicateUserStatuses | Where-Object { $_ -eq 409 }).Count -ne 1) {
+        throw "Concurrent account creation returned unexpected statuses: $duplicateUserStatuses."
+    }
     $staffLogin = Send-Request POST '/api/auth/login' 200 -Body @{ email = 'staff@example.test'; password = $inventoryStaffPassword }
     $staffToken = $staffLogin.accessToken
     Send-Request POST '/api/users' 403 -Token $staffToken -Body @{ email = 'other@example.test'; password = $inventoryStaffPassword }

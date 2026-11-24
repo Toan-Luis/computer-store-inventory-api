@@ -156,36 +156,23 @@ The Compose configuration runs the API in Development at `http://localhost:5072/
 
 On Windows, configure Docker Desktop's disk image location under Settings and VM resources before pulling images. This location controls where images, build cache and volumes are stored. For this setup it is `D:\DockerData\DockerDesktopWSL`.
 
-On the first run, create `.env` in the solution directory with generated credentials:
+From PowerShell 7 in the solution directory, start the first run with:
 
 ```powershell
-$inventorySqlPassword = [Guid]::NewGuid().ToString('N') + 'aA!9'
-$inventoryJwtKey = [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(48))
-New-Item -ItemType File -Path .env -Value "SQL_PASSWORD=$inventorySqlPassword`nJWT_SIGNING_KEY=$inventoryJwtKey`n" | Out-Null
+./scripts/Start-Docker.ps1 -CreateAdmin
 ```
 
-The `.env.example` file lists the required settings. Git and the Docker build context exclude `.env`. Keep this file for subsequent runs so the existing SQL volume and tokens use the same credentials and key.
+The script generates `.env` with random SQL and JWT credentials if the file is absent, builds the API, starts SQL Server, applies migrations and prompts for your administrator email and password. It then starts the API. Administrator passwords require at least 12 characters with uppercase, lowercase, digit and symbol. The password is used by the bootstrap command and removed from the script environment before it starts the API.
 
-Build, start SQL Server, and apply migrations:
+For later starts or after updating source, run:
 
 ```powershell
-docker compose build api
-docker compose up -d db --wait
-docker compose run --rm api --migrate
+./scripts/Start-Docker.ps1
 ```
 
-Create your initial administrator, then start the API:
+The `.env.example` file lists the required settings. Git and the Docker build context exclude `.env`. Keep this file for subsequent runs so the existing SQL volume and tokens use the same credentials and key. Re-running with `-CreateAdmin` for an existing administrator preserves that account's password.
 
-```powershell
-$env:BootstrapAdmin__Email = Read-Host 'Admin email'
-$inventoryPassword = Read-Host 'Admin password' -AsSecureString
-$env:BootstrapAdmin__Password = [Net.NetworkCredential]::new('', $inventoryPassword).Password
-docker compose run --rm -e BootstrapAdmin__Email -e BootstrapAdmin__Password api --bootstrap-admin
-Remove-Item Env:BootstrapAdmin__Password
-docker compose up -d api
-```
-
-Use `docker compose logs api` for startup output and `docker compose down` to stop the stack. The volume retains the database when the containers are stopped or recreated. For subsequent starts, run `docker compose up -d`. After pulling source changes, rebuild the API image and run the migration command before restarting it.
+Use `docker compose logs api` for startup output and `docker compose down` to stop the stack. The volume retains the database when the containers are stopped or recreated.
 
 After building the image, verify the container setup with PowerShell 7:
 
