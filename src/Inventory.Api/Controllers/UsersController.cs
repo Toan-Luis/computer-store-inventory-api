@@ -17,11 +17,6 @@ public sealed class UsersController(UserManager<IdentityUser> users, InventoryDb
     public async Task<ActionResult<CreatedStaff>> CreateStaff(CreateStaffRequest request, CancellationToken cancellationToken)
     {
         var email = request.Email.Trim();
-        if (await users.FindByNameAsync(email) is not null)
-        {
-            return Conflict(new ProblemDetails { Title = "This account already exists.", Status = 409 });
-        }
-
         await using var transaction = await context.Database.BeginTransactionAsync(cancellationToken);
         try
         {

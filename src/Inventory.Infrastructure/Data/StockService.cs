@@ -14,24 +14,25 @@ public sealed class StockService(InventoryDbContext context) : IStockService
         // and arithmetic run together in SQL so concurrent issues cannot oversell.
         foreach (var line in movement.Lines.OrderBy(line => line.ProductId))
         {
-            var query = context.Products.Where(product => product.Id == line.ProductId);
-            int changed;
+            var products = context.Products.Where(product => product.Id == line.ProductId);
+            var quantityChange = line.Quantity;
+            IQueryable<Product> eligibleProducts;
             if (movement.Type == StockMovementType.Receipt)
             {
-                changed = await query.Where(product => product.IsActive && product.QuantityOnHand <= int.MaxValue - line.Quantity)
-                    .ExecuteUpdateAsync(update => update.SetProperty(product => product.QuantityOnHand,
-                        product => product.QuantityOnHand + line.Quantity), cancellationToken);
+                eligibleProducts = products.Where(product => product.IsActive
+                    && product.QuantityOnHand <= int.MaxValue - line.Quantity);
             }
             else
             {
-                changed = await query.Where(product => product.QuantityOnHand >= line.Quantity)
-                    .ExecuteUpdateAsync(update => update.SetProperty(product => product.QuantityOnHand,
-                        product => product.QuantityOnHand - line.Quantity), cancellationToken);
+                eligibleProducts = products.Where(product => product.QuantityOnHand >= line.Quantity);
+                quantityChange = -line.Quantity;
             }
 
+            var changed = await eligibleProducts.ExecuteUpdateAsync(update => update.SetProperty(
+                product => product.QuantityOnHand, product => product.QuantityOnHand + quantityChange), cancellationToken);
             if (changed == 0)
             {
-                var product = await query.AsNoTracking().SingleOrDefaultAsync(cancellationToken);
+                var product = await products.AsNoTracking().SingleOrDefaultAsync(cancellationToken);
                 if (product is null)
                 {
                     throw new InventoryException(404, $"Product {line.ProductId} does not exist.");
